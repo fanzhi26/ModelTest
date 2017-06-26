@@ -37,6 +37,7 @@ public class FP3DSChunk : FPBaseChunk
 }
 public class ParserCommonMethods : MonoBehaviour
 {
+    protected BinaryReader Cur_Reader = null;
     protected virtual bool ReadChunk( FPBaseChunk _chunk)
     {
         return true;
@@ -45,9 +46,11 @@ public class ParserCommonMethods : MonoBehaviour
     {
         return null;
     }
-    protected virtual int GetRemainingSize( )
+    protected virtual long GetRemainingSize( )
     {
-        return 0;
+        if (Cur_Reader == null)
+            return 0;
+        return Cur_Reader.BaseStream.Length - Cur_Reader.BaseStream.Position;
     }
     protected virtual void SetReadLimit( int pos)
     {
@@ -64,7 +67,8 @@ public class ParserCommonMethods : MonoBehaviour
         {
             using (BinaryReader stream_reader = new BinaryReader(bit_stream))
             {
-                GameObject game_obj = parse(stream_reader, _name);
+                Cur_Reader = stream_reader;
+                GameObject game_obj = parse(_name);
                 return game_obj;
             }
         }
@@ -74,7 +78,7 @@ public class ParserCommonMethods : MonoBehaviour
     {
         return 0;
     }
-    protected virtual GameObject parse(BinaryReader stream_reader, string _name = "testobj")
+    protected virtual GameObject parse(string _name = "testobj")
     {
         return null;
     }
@@ -98,6 +102,15 @@ public class ParserCommonMethods : MonoBehaviour
             return false;
         return true;
     }
+
+    protected virtual void skipBlock(long _pos, long _size)
+    {
+        if (Cur_Reader == null)
+            return;
+        Debug.Log("Skipped Size = " + _size.ToString());
+        Cur_Reader.BaseStream.Seek(_pos - GetChunkHeadSize(), SeekOrigin.Begin);
+    }
+
 }
 // Flynn 3D Model Parser 3DS File Format Chunk Header
 public enum FP_3DS_CH{
@@ -294,7 +307,7 @@ public class FP3DSParser : ParserCommonMethods {
     // block header's size
     protected override int GetChunkHeadSize()
     {
-        return 16;
+        return 6;
     }
     protected override bool BEGIN_BLOCK()
     {
@@ -345,24 +358,27 @@ public class FP3DSParser : ParserCommonMethods {
     /// <param name="stream_reader"> file stream reader </param>
     /// <param name="_name">result object's name</param>
     /// <returns></returns>
-    protected override GameObject parse(BinaryReader stream_reader, string _name)
+    protected override GameObject parse( string _name)
     {
         Debug.Log("Enter Parse");
         GameObject parse_result_obj = new GameObject(_name);
         // check file status
         // the file should have at least once chuncks
         // parse all meshes in file
-        while (stream_reader.BaseStream.Length > GetChunkHeadSize())
+        
+        while (Cur_Reader.BaseStream.Length > GetChunkHeadSize())
         {
             uint chunk_size = 0;
             uint chunk_id = 0;
-            chunk_id = stream_reader.ReadUInt16();
-            chunk_size = stream_reader.ReadUInt32();
+            long cur_pos = 0;
+            chunk_id = Cur_Reader.ReadUInt16();
+            chunk_size = Cur_Reader.ReadUInt32();
+            cur_pos = Cur_Reader.BaseStream.Position;
             Debug.Log("Before Check Main Chunk");
             
             if ((FP_3DS_CH)chunk_id == FP_3DS_CH.MAIN_CHUNK)
             {
-                parseBody(stream_reader, parse_result_obj.transform);
+                parseBody(parse_result_obj);
             }
         }
 
@@ -377,109 +393,117 @@ public class FP3DSParser : ParserCommonMethods {
         // Replace all occurrences of the default material with a
         // valid material. Generate it if no material containing
         // DEFAULT in its name has been found in the file
-        ReplaceDefaultMaterial();
+        ReplaceDefaultMaterial(parse_result_obj);
 
         // Convert the scene from our internal representation to an
         // aiScene object. This involves copying all meshes, lights
         // and cameras to the scene
-        ConvertScene(pScene);
+        ConvertScene(parse_result_obj);
 
         // Generate the node graph for the scene. This is a little bit
         // tricky since we'll need to split some meshes into submeshes
-        GenerateNodeGraph(pScene);
+        GenerateNodeGraph(parse_result_obj);
 
         // Now apply the master scaling factor to the scene
-        ApplyMasterScale(pScene);
+        ApplyMasterScale(parse_result_obj);
         Debug.Log("End Parse");
         return parse_result_obj;
     }
-    void parseBody(BinaryReader stream_reader, Transform _parent = null)
+
+    void parseBody(GameObject _parent)
     {
         Debug.Log("Enter parseBody");
         uint chunk_size = 0;
         uint chunk_id = 0;
-        while (stream_reader.BaseStream.Position < stream_reader.BaseStream.Length)
+        long cur_pos = 0;
+        while (Cur_Reader.BaseStream.Position < Cur_Reader.BaseStream.Length)
         {
-            chunk_id = stream_reader.ReadUInt16();
-            chunk_size = stream_reader.ReadUInt32();
+            chunk_id = Cur_Reader.ReadUInt16();
+            chunk_size = Cur_Reader.ReadUInt32();
+            cur_pos = Cur_Reader.BaseStream.Position;
             switch ((FP_3DS_CH)chunk_id)
             {
                 case FP_3DS_CH.M3D_VERSION:
                     Debug.Log("M3D_VERSION");
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
                 case FP_3DS_CH.EDITOR_CHUNK:
-                    parseMesh(stream_reader, chunk_size, _parent);
+                    parseMesh(cur_pos, chunk_size, _parent);
                     break;
                 case FP_3DS_CH.KEYFRAMER_CHUNK:
                     Debug.Log("KEYFRAMER_CHUNK");
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
                 default:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
             }
         }
         Debug.Log("End parseBody");
     }
 
-    void parseMesh(BinaryReader stream_reader, long _size, Transform _parent = null)
+    void parseMesh(long _pos, long _size, GameObject _parent)
     {
         Debug.Log("Enter parseMesh");
         uint chunk_size = 0;
         uint chunk_id = 0;
-        while (stream_reader.BaseStream.Position < _size)
+        long cur_pos = 0;
+        while (Cur_Reader.BaseStream.Position < _size)
         {
-            chunk_id = stream_reader.ReadUInt16();
-            chunk_size = stream_reader.ReadUInt32();
+            chunk_id = Cur_Reader.ReadUInt16();
+            chunk_size = Cur_Reader.ReadUInt32();
+            cur_pos = Cur_Reader.BaseStream.Position;
             switch ((FP_3DS_CH)chunk_id)
             {
                 case FP_3DS_CH.OBJECT_BLOCK:
-                    parseObject(stream_reader, chunk_size, _parent);
+                    parseObject(cur_pos, chunk_size, _parent);
                     break;
                 /*case FZ_3DS_CHECK_SUM_CODE.MATERIAL_BLOCK:
                     break;*/
                 default:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
             }
         }
         Debug.Log("End parseMesh");
     }
-    void parseObject(BinaryReader stream_reader, long _size, Transform _parent = null)
+    void parseObject(long _pos, long _size, GameObject _parent = null)
     {
         Debug.Log("Enter parseObject");
-        string obj_name = stream_reader.ReadString();
+        string obj_name = Cur_Reader.ReadString();
         GameObject msh_obj = new GameObject(obj_name);
 
         uint chunk_size = 0;
         uint chunk_id = 0;
-        while (stream_reader.BaseStream.Position < _size)
+        long cur_pos = 0;
+        while (Cur_Reader.BaseStream.Position < _size)
         {
-            chunk_id = stream_reader.ReadUInt16();
-            chunk_size = stream_reader.ReadUInt32();
+            chunk_id = Cur_Reader.ReadUInt16();
+            chunk_size = Cur_Reader.ReadUInt32();
+            cur_pos = Cur_Reader.BaseStream.Position;
             switch ((FP_3DS_CH)chunk_id)
             {
                 case FP_3DS_CH.TRIANGULAR_MESH:
-                    parseShape(stream_reader, chunk_size, msh_obj);
+                    parseShape(Cur_Reader, chunk_size, msh_obj);
                     break;
                 case FP_3DS_CH.LIGHT:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
                 case FP_3DS_CH.CAMERA:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
                 default:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
             }
         }
-        msh_obj.transform.SetParent(_parent);
+        msh_obj.transform.SetParent(_parent.transform);
+        skipBlock(_pos, _size);
         Debug.Log("End parseObject");
     }
     void parseShape(BinaryReader stream_reader, long _size, GameObject _obj)
@@ -492,11 +516,12 @@ public class FP3DSParser : ParserCommonMethods {
         _obj.AddComponent<MeshRenderer>();
         Vector3[] new_vertices = null;
         Vector2[] map_coords = null;
+        long cur_pos = 0;
         while (stream_reader.BaseStream.Position < _size)
         {
             chunk_id = stream_reader.ReadUInt16();
             chunk_size = stream_reader.ReadUInt32();
-
+            cur_pos = Cur_Reader.BaseStream.Position;
             switch ((FP_3DS_CH)chunk_id)
             {
                 case FP_3DS_CH.VERTICES_LIST:
@@ -528,11 +553,11 @@ public class FP3DSParser : ParserCommonMethods {
                     break;
                 case FP_3DS_CH.LOCAL_COORDINATES_SYSTEM:
                     Debug.Log("LOCAL_COORDINATES_SYSTEM");
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
                 default:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
             }
         }
@@ -561,10 +586,10 @@ public class FP3DSParser : ParserCommonMethods {
 
         uint chunk_size = 0;
         uint chunk_id = 0;
-        long seek_pos = 0;
+        long cur_pos = 0;
         while (stream_reader.BaseStream.Position < _size)
         {
-            seek_pos = stream_reader.BaseStream.Position;
+            cur_pos = stream_reader.BaseStream.Position;
             chunk_id = stream_reader.ReadUInt16();
             chunk_size = stream_reader.ReadUInt32();
             switch ((FP_3DS_CH)chunk_id)
@@ -593,17 +618,17 @@ public class FP3DSParser : ParserCommonMethods {
                         _mesh_obj.mesh.SetTriangles(sub_msh_face, sub_msh_mtrls.Count);
                         sub_msh_mtrls.Add(material_name);
                     }
-                    stream_reader.BaseStream.Seek(seek_pos + chunk_size, SeekOrigin.Begin);
+                    skipBlock(cur_pos, chunk_size);
                     break;
                 case FP_3DS_CH.SMOOTHING_GROUP_LIST:
                     {
                         Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                        skipBlock(stream_reader, chunk_size);
+                        skipBlock(cur_pos, chunk_size);
                     }
                     break;
                 default:
                     Debug.Log("Skip this chunk + " + ((FP_3DS_CH)chunk_id).ToString());
-                    skipBlock(stream_reader, chunk_size);
+                    skipBlock(cur_pos, chunk_size);
                     break;
             }
 
@@ -620,11 +645,6 @@ public class FP3DSParser : ParserCommonMethods {
     void parseAnimation()
     {
 
-    }
-    void skipBlock(BinaryReader _stream, long _size)
-    {
-        Debug.Log("Skipped Size = " + _size.ToString());
-        _stream.BaseStream.Seek(_size - GetChunkHeadSize(), SeekOrigin.Current);
     }
 
 
