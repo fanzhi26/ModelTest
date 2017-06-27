@@ -302,6 +302,8 @@ public enum FP_3DS_CH{
 ///  3DS Model Parser
 /// </summary>
 public class FP3DSParser : ParserCommonMethods {
+
+    protected bool m_bIsPrj = false;
     
     #region Protected Methods
     // block header's size
@@ -365,9 +367,9 @@ public class FP3DSParser : ParserCommonMethods {
         // check file status
         // the file should have at least once chuncks
         // parse all meshes in file
-        
         while (Cur_Reader.BaseStream.Length > GetChunkHeadSize())
         {
+            // read chunk
             uint chunk_size = 0;
             uint chunk_id = 0;
             long cur_pos = 0;
@@ -375,11 +377,17 @@ public class FP3DSParser : ParserCommonMethods {
             chunk_size = Cur_Reader.ReadUInt32();
             cur_pos = Cur_Reader.BaseStream.Position;
             Debug.Log("Before Check Main Chunk");
-            
+            // parse chunk
             if ((FP_3DS_CH)chunk_id == FP_3DS_CH.MAIN_CHUNK)
             {
                 parseBody(parse_result_obj);
             }
+            else if ((FP_3DS_CH)chunk_id == FP_3DS_CH.PRJ_MASTER)
+            {
+                m_bIsPrj = true;
+            }
+            // go to next chunk
+            skipBlock(cur_pos, chunk_size);
         }
 
         // Process all meshes in the file. First check whether all
@@ -439,6 +447,7 @@ public class FP3DSParser : ParserCommonMethods {
                     skipBlock(cur_pos, chunk_size);
                     break;
             }
+            skipBlock(cur_pos, chunk_size);
         }
         Debug.Log("End parseBody");
     }
