@@ -44,14 +44,36 @@ public class MaterialManager
     protected static Dictionary<string, Material> m_mapMaterials;
     public static void AddMaterial(string _name, Material _mat)
     {
-
+        m_mapMaterials.Add(_name, _mat);
     }
-
+    public static bool HasMaterial(string _name)
+    {
+        if (m_mapMaterials.ContainsKey(_name))
+            return true;
+        return false;
+    }
     public static Material GetMaterial(string _name)
     {
         return null;
     }
+
+    public static int GetSubMeshIdx(string _mesh, string _mat)
+    {
+        return 0;
+    }
+
+    public static string GetSubMeshMaterialName(string _mesh, int _idx)
+    {
+        return string.Empty;
+    }
+    public static int AddSubMeshMaterial(string _mesh, string _name)
+    {
+        return 0;
+    }
+
 }
+
+
 public class ParserCommonMethods : MonoBehaviour
 {
     protected BinaryReader Cur_Reader = null;
@@ -132,6 +154,21 @@ public class ParserCommonMethods : MonoBehaviour
         m_listMeshInFile = new List<GameObject>();
     }
     protected List<GameObject> m_listMeshInFile = new List<GameObject>();
+    protected Dictionary<string, GameObject> m_mapMeshesInFile = new Dictionary<string, GameObject>();
+    protected MeshFilter GetMeshByName(string _name)
+    {
+        return null;
+    }
+
+    protected GameObject GetLastAddObject()
+    {
+        return m_listMeshInFile[m_listMeshInFile.Count - 1];
+    }
+
+    protected GameObject GetObjetByName(string _name)
+    {
+        return null;
+    }
 
 }
 // Flynn 3D Model Parser 3DS File Format Chunk Header
@@ -539,7 +576,7 @@ public class FP3DSParser : ParserCommonMethods {
                     GameObject msh_obj = new GameObject(obj_name);
                     m_listMeshInFile.Add(msh_obj);
                     // read mesh detail infos (verticies, faces)
-                    parseShape( msh_obj);
+                    parseShape(obj_name);
                     msh_obj.transform.SetParent(_parent.transform);
                     break;
                 case FP_3DS_CH.LIGHT:
@@ -556,13 +593,13 @@ public class FP3DSParser : ParserCommonMethods {
 
     // ------------------------------------------------------------------------------------------------
     // Read a mesh chunk. Here's the actual mesh data
-    void parseShape(GameObject _obj)
+    void parseShape(string _mshName)
     {
         Debug.Log("Enter parseShape");
         uint chunk_size = 0;
         uint chunk_id = 0;
         long cur_pos = 0;
-
+        GameObject _obj = GetLastAddObject();
         /// Add Mesh component to Game Object.
         MeshFilter msh_filter = _obj.AddComponent<MeshFilter>();
         _obj.AddComponent<MeshRenderer>();
@@ -591,7 +628,7 @@ public class FP3DSParser : ParserCommonMethods {
                     break;
 
                 case FP_3DS_CH.FACES_DESCRIPTION:
-                    parseFaces(cur_pos, msh_filter, chunk_size);
+                    parseFaces(cur_pos, _mshName, chunk_size);
                     break;
                 case FP_3DS_CH.MAPPING_COORDINATES_LIST:
                     {
@@ -630,13 +667,13 @@ public class FP3DSParser : ParserCommonMethods {
         Debug.Log("End parseShape");
     }
 
-    void parseFaces(long _pos, MeshFilter _mesh_obj, long _size)
+    void parseFaces(long _pos,string _mshName, long _size)
     {
         // This is the list of all faces in the current mesh
         Debug.Log("Enter parseFaces");
+        MeshFilter _mesh_obj = GetMeshByName(_mshName);
         uint face_num = Cur_Reader.ReadUInt16();
         int[] new_faces = new int[face_num * 3];
-        List<string> sub_msh_mtrls = new List<string>();
         uint face_flag = 0;
         for (int i = 0; i < face_num * 3; i++)
         {
@@ -664,30 +701,7 @@ public class FP3DSParser : ParserCommonMethods {
             switch ((FP_3DS_CH)chunk_id)
             {
                 case FP_3DS_CH.FACES_MATERIAL:
-                    {
-                        string material_name = Cur_Reader.ReadString();
-
-                       /* if (!m_mapGlobalMaterials.ContainsKey(material_name))
-                        {
-                            Debug.Log("create material " + material_name);
-                            Material new_material = new Material(Shader.Find("Standard"));
-                            m_mapGlobalMaterials.Add(material_name, new_material);
-                        }*/
-
-                        int sub_msh_face_count = Cur_Reader.ReadUInt16();
-                        int[] sub_msh_face = new int[sub_msh_face_count * 3];
-                        for (int sub_idx = 0; sub_idx < sub_msh_face_count * 3; sub_idx += 3)
-                        {
-                            uint ref_face_idx = Cur_Reader.ReadUInt16();
-                            sub_msh_face[sub_idx] = new_faces[ref_face_idx * 3];
-                            sub_msh_face[sub_idx + 1] = new_faces[ref_face_idx * 3 + 1];
-                            sub_msh_face[sub_idx + 2] = new_faces[ref_face_idx * 3 + 2];
-                            //sub_msh_face[sub_idx]
-                        }
-                        _mesh_obj.mesh.SetTriangles(sub_msh_face, sub_msh_mtrls.Count);
-                        sub_msh_mtrls.Add(material_name);
-                    }
-                    skipBlock(cur_pos, chunk_size);
+                        parseFaceChunk(cur_pos, _mshName, chunk_size);
                     break;
                 case FP_3DS_CH.SMOOTHING_GROUP_LIST:
                     {
@@ -704,11 +718,12 @@ public class FP3DSParser : ParserCommonMethods {
         Debug.Log("End parseFaces");
     }
 
-    void parseFaceChunk(long _pos, MeshFilter _mesh_obj, long _size)
+    void parseFaceChunk(long _pos, string _mshName, long _size)
     {
         uint chunk_size = 0;
         uint chunk_id = 0;
         long cur_pos = 0;
+        MeshFilter _mesh_obj = GetMeshByName(_mshName);
         ///while (Cur_Reader.BaseStream.Position < _size)
         {
             cur_pos = Cur_Reader.BaseStream.Position;
@@ -735,12 +750,12 @@ public class FP3DSParser : ParserCommonMethods {
                     {
                         // at fist an asciiz with the material name
                         string material_name = Cur_Reader.ReadString();
-                        MaterialManager.
-                        if (!m_mapGlobalMaterials.ContainsKey(material_name))
+                        if (MaterialManager.HasMaterial(material_name))
                          {
                              Debug.Log("create material " + material_name);
                              Material new_material = new Material(Shader.Find("Standard"));
-                             m_mapGlobalMaterials.Add(material_name, new_material);
+                             
+                            MaterialManager.AddMaterial(material_name, new_material);
                          }
 
                         int sub_msh_face_count = Cur_Reader.ReadUInt16();
@@ -748,13 +763,13 @@ public class FP3DSParser : ParserCommonMethods {
                         for (int sub_idx = 0; sub_idx < sub_msh_face_count * 3; sub_idx += 3)
                         {
                             uint ref_face_idx = Cur_Reader.ReadUInt16();
-                            sub_msh_face[sub_idx] = new_faces[ref_face_idx * 3];
-                            sub_msh_face[sub_idx + 1] = new_faces[ref_face_idx * 3 + 1];
-                            sub_msh_face[sub_idx + 2] = new_faces[ref_face_idx * 3 + 2];
+                            sub_msh_face[sub_idx] = _mesh_obj.mesh.triangles[ref_face_idx * 3];
+                            sub_msh_face[sub_idx + 1] = _mesh_obj.mesh.triangles[ref_face_idx * 3 + 1];
+                            sub_msh_face[sub_idx + 2] = _mesh_obj.mesh.triangles[ref_face_idx * 3 + 2];
                             //sub_msh_face[sub_idx]
                         }
-                        _mesh_obj.mesh.SetTriangles(sub_msh_face, sub_msh_mtrls.Count);
-                        sub_msh_mtrls.Add(material_name);
+                        int sub_msh_idx = MaterialManager.AddSubMeshMaterial(_mshName, material_name);
+                        _mesh_obj.mesh.SetTriangles(sub_msh_face, sub_msh_idx);
                     }
                     skipBlock(cur_pos, chunk_size);
                     break;
